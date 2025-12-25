@@ -65,7 +65,23 @@ jobs:
             --namespace ingress-nginx \
             --for=condition=Ready pod \
             --selector=app.kubernetes.io/component=controller \
-            --timeout=90s
+            --timeout=180s
+      
+      - name: Debug ingress-nginx (on failure)
+        if: failure()
+        run: |
+          echo "=== Pods (ingress-nginx) ==="
+          ./bin/kubectl get pods -n ingress-nginx -o wide
+
+          echo "=== Describe controller pod ==="
+          POD="$(./bin/kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')"
+          ./bin/kubectl describe pod -n ingress-nginx "$POD"
+
+          echo "=== Events (ingress-nginx) ==="
+          ./bin/kubectl get events -n ingress-nginx --sort-by=.lastTimestamp | tail -n 80
+
+          echo "=== Controller logs (last 120 lines) ==="
+          ./bin/kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=120 || true
 
       - name: Smoke test ingress-nginx is accepting HTTP
         run: |
