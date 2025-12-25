@@ -30,3 +30,18 @@ jobs:
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
           kind version
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --config kind/cluster.yaml
+
+      - name: Verify cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
