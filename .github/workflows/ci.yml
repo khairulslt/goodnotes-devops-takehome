@@ -54,3 +54,33 @@ jobs:
         run: |
           ./bin/kubectl cluster-info
           ./bin/kubectl get nodes
+
+      - name: Deploy ingress-nginx
+        run: |
+          ./bin/kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+
+      - name: Wait for ingress-nginx controller
+        run: |
+          ./bin/kubectl wait \
+            --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=90s
+
+      - name: Smoke test ingress-nginx is accepting HTTP
+        run: |
+          # For Kind, ingress-nginx binds to localhost:80 via hostPort in the Kind provider manifest.
+          # Before we create any Ingress objects, NGINX typically returns 404, which is OK.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
+          echo "HTTP status from ingress endpoint: $code"
+
+          if [ "$code" != "404" ] && [ "$code" != "308" ] && [ "$code" != "200" ]; then
+            echo "Unexpected status code from ingress endpoint: $code"
+            echo "Debug: ingress-nginx pods"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            echo "Debug: ingress-nginx service"
+            ./bin/kubectl get svc -n ingress-nginx
+            echo "Debug: ingress-nginx controller logs (last 80 lines)"
+            ./bin/kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=80
+            exit 1
+          fi
