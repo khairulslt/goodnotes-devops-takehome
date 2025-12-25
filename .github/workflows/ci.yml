@@ -46,6 +46,10 @@ jobs:
         run: |
           ./bin/kind create cluster --config kind/cluster.yaml
 
+      - name: Wait for nodes to be Ready
+        run: |
+          ./bin/kubectl wait --for=condition=Ready node --all --timeout=90s
+
       - name: Verify cluster
         run: |
           ./bin/kubectl cluster-info
