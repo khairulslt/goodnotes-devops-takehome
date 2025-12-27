@@ -105,41 +105,46 @@ jobs:
         run: |
           ./bin/kubectl apply -f k8s/ingress.yaml
 
-      - name: Smoke test foo & bar routing
+      - name: Validate ingress host-based routing (foo.localhost & bar.localhost)
         run: |
           set -e
 
-          echo "Waiting for foo.localhost to route..."
-          for i in {1..20}; do
-            resp=$(curl -s -H "Host: foo.localhost" http://127.0.0.1 || true)
-            echo "Attempt $i: $resp"
-            if [ "$resp" = "foo" ]; then
-              echo "foo routing OK"
-              break
-            fi
-            sleep 2
-          done
+          echo "================================================="
+          echo "VALIDATING INGRESS HOST-BASED ROUTING"
+          echo "================================================="
+          echo ""
+          echo "Expected:"
+          echo "  foo.localhost -> response 'foo'"
+          echo "  bar.localhost -> response 'bar'"
+          echo ""
 
-          if [ "$resp" != "foo" ]; then
-            echo "❌ foo routing failed"
+          validate_route () {
+            host="$1"
+            expected="$2"
+
+            echo "Checking route for host: $host"
+            for i in {1..20}; do
+              resp=$(curl -s -H "Host: $host" http://127.0.0.1 || true)
+              echo "  Attempt $i: response='$resp'"
+
+              if [ "$resp" = "$expected" ]; then
+                echo "  ✅ SUCCESS: $host routed correctly to '$expected'"
+                echo ""
+                return 0
+              fi
+
+              sleep 2
+            done
+
+            echo ""
+            echo "  ❌ FAILURE: $host did NOT route to '$expected'"
+            echo "  Last response was: '$resp'"
             exit 1
-          fi
+          }
 
-          echo "Waiting for bar.localhost to route..."
-          for i in {1..20}; do
-            resp=$(curl -s -H "Host: bar.localhost" http://127.0.0.1 || true)
-            echo "Attempt $i: $resp"
-            if [ "$resp" = "bar" ]; then
-              echo "bar routing OK"
-              break
-            fi
-            sleep 2
-          done
+          validate_route "foo.localhost" "foo"
+          validate_route "bar.localhost" "bar"
 
-          if [ "$resp" != "bar" ]; then
-            echo "❌ bar routing failed"
-            exit 1
-          fi
-
-          echo "✅ Ingress routing works"
-
+          echo "================================================="
+          echo "✅ INGRESS ROUTING VALIDATED SUCCESSFULLY"
+          echo "================================================="
