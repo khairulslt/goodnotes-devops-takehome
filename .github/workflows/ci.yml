@@ -66,22 +66,6 @@ jobs:
             --for=condition=Ready pod \
             --selector=app.kubernetes.io/component=controller \
             --timeout=180s
-      
-      - name: Debug ingress-nginx (on failure)
-        if: failure()
-        run: |
-          echo "=== Pods (ingress-nginx) ==="
-          ./bin/kubectl get pods -n ingress-nginx -o wide
-
-          echo "=== Describe controller pod ==="
-          POD="$(./bin/kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')"
-          ./bin/kubectl describe pod -n ingress-nginx "$POD"
-
-          echo "=== Events (ingress-nginx) ==="
-          ./bin/kubectl get events -n ingress-nginx --sort-by=.lastTimestamp | tail -n 80
-
-          echo "=== Controller logs (last 120 lines) ==="
-          ./bin/kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=120 || true
 
       - name: Smoke test ingress-nginx is accepting HTTP
         run: |
@@ -100,3 +84,19 @@ jobs:
             ./bin/kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=80
             exit 1
           fi
+
+      - name: Deploy foo app
+        run: |
+          ./bin/kubectl apply -f k8s/foo.yaml
+
+      - name: Deploy bar app
+        run: |
+          ./bin/kubectl apply -f k8s/bar.yaml
+
+      - name: Wait for foo deployment to be ready
+        run: |
+          ./bin/kubectl rollout status deployment/foo --timeout=90s
+
+      - name: Wait for bar deployment to be ready
+        run: |
+          ./bin/kubectl rollout status deployment/bar --timeout=90s
