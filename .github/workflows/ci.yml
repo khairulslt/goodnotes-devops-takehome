@@ -1,0 +1,150 @@
+name: pr-ci-smoke
+
+on:
+  pull_request:
+    branches:
+      - "**"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Smoke - show context
+        run: |
+          echo "✅ CI is running for a Pull Request"
+          echo "Repo: $GITHUB_REPOSITORY"
+          echo "Workflow: $GITHUB_WORKFLOW"
+          echo "Run ID: $GITHUB_RUN_ID"
+          echo "Ref: $GITHUB_REF"
+          echo "SHA: $GITHUB_SHA"
+          echo ""
+          echo "Files at repo root:"
+          ls -la
+
+      - name: Prepare local bin directory
+        run: |
+          mkdir -p ./bin
+
+      - name: Install kind
+        run: |
+          curl -Lo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          chmod +x ./bin/kind
+          ./bin/kind version
+
+      - name: Install kubectl
+        run: |
+          curl -Lo ./bin/kubectl \
+            "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./bin/kubectl
+          ./bin/kubectl version --client
+
+      - name: Create kind cluster
+        run: |
+          ./bin/kind create cluster --config kind/cluster.yaml
+
+      - name: Wait for nodes to be Ready
+        run: |
+          ./bin/kubectl wait --for=condition=Ready node --all --timeout=90s
+
+      - name: Verify cluster
+        run: |
+          ./bin/kubectl cluster-info
+          ./bin/kubectl get nodes
+
+      - name: Deploy ingress-nginx
+        run: |
+          ./bin/kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+
+      - name: Wait for ingress-nginx controller
+        run: |
+          ./bin/kubectl wait \
+            --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
+      - name: Smoke test ingress-nginx is accepting HTTP
+        run: |
+          # For Kind, ingress-nginx binds to localhost:80 via hostPort in the Kind provider manifest.
+          # Before we create any Ingress objects, NGINX typically returns 404, which is OK.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
+          echo "HTTP status from ingress endpoint: $code"
+
+          if [ "$code" != "404" ] && [ "$code" != "308" ] && [ "$code" != "200" ]; then
+            echo "Unexpected status code from ingress endpoint: $code"
+            echo "Debug: ingress-nginx pods"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            echo "Debug: ingress-nginx service"
+            ./bin/kubectl get svc -n ingress-nginx
+            echo "Debug: ingress-nginx controller logs (last 80 lines)"
+            ./bin/kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=80
+            exit 1
+          fi
+
+      - name: Deploy foo app
+        run: |
+          ./bin/kubectl apply -f k8s/foo.yaml
+
+      - name: Deploy bar app
+        run: |
+          ./bin/kubectl apply -f k8s/bar.yaml
+
+      - name: Wait for foo deployment to be ready
+        run: |
+          ./bin/kubectl rollout status deployment/foo --timeout=90s
+
+      - name: Wait for bar deployment to be ready
+        run: |
+          ./bin/kubectl rollout status deployment/bar --timeout=90s
+
+      - name: Deploy ingress rules
+        run: |
+          ./bin/kubectl apply -f k8s/ingress.yaml
+
+      - name: Validate ingress host-based routing (foo.localhost & bar.localhost)
+        run: |
+          set -e
+
+          echo "================================================="
+          echo "VALIDATING INGRESS HOST-BASED ROUTING"
+          echo "================================================="
+          echo ""
+          echo "Expected:"
+          echo "  foo.localhost -> response 'foo'"
+          echo "  bar.localhost -> response 'bar'"
+          echo ""
+
+          validate_route () {
+            host="$1"
+            expected="$2"
+
+            echo "Checking route for host: $host"
+            for i in {1..20}; do
+              resp=$(curl -s -H "Host: $host" http://127.0.0.1 || true)
+              echo "  Attempt $i: response='$resp'"
+
+              if [ "$resp" = "$expected" ]; then
+                echo "  ✅ SUCCESS: $host routed correctly to '$expected'"
+                echo ""
+                return 0
+              fi
+
+              sleep 2
+            done
+
+            echo ""
+            echo "  ❌ FAILURE: $host did NOT route to '$expected'"
+            echo "  Last response was: '$resp'"
+            exit 1
+          }
+
+          validate_route "foo.localhost" "foo"
+          validate_route "bar.localhost" "bar"
+
+          echo "================================================="
+          echo "✅ INGRESS ROUTING VALIDATED SUCCESSFULLY"
+          echo "================================================="
