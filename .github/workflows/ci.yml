@@ -109,14 +109,37 @@ jobs:
         run: |
           set -e
 
-          echo "Testing foo.localhost"
-          resp=$(curl -s -H "Host: foo.localhost" http://127.0.0.1)
-          echo "Response: $resp"
-          [ "$resp" = "foo" ]
+          echo "Waiting for foo.localhost to route..."
+          for i in {1..20}; do
+            resp=$(curl -s -H "Host: foo.localhost" http://127.0.0.1 || true)
+            echo "Attempt $i: $resp"
+            if [ "$resp" = "foo" ]; then
+              echo "foo routing OK"
+              break
+            fi
+            sleep 2
+          done
 
-          echo "Testing bar.localhost"
-          resp=$(curl -s -H "Host: bar.localhost" http://127.0.0.1)
-          echo "Response: $resp"
-          [ "$resp" = "bar" ]
+          if [ "$resp" != "foo" ]; then
+            echo "❌ foo routing failed"
+            exit 1
+          fi
+
+          echo "Waiting for bar.localhost to route..."
+          for i in {1..20}; do
+            resp=$(curl -s -H "Host: bar.localhost" http://127.0.0.1 || true)
+            echo "Attempt $i: $resp"
+            if [ "$resp" = "bar" ]; then
+              echo "bar routing OK"
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$resp" != "bar" ]; then
+            echo "❌ bar routing failed"
+            exit 1
+          fi
 
           echo "✅ Ingress routing works"
+
