@@ -100,3 +100,23 @@ jobs:
       - name: Wait for bar deployment to be ready
         run: |
           ./bin/kubectl rollout status deployment/bar --timeout=90s
+
+      - name: Deploy ingress rules
+        run: |
+          ./bin/kubectl apply -f k8s/ingress.yaml
+
+      - name: Smoke test foo & bar routing
+        run: |
+          set -e
+
+          echo "Testing foo.localhost"
+          resp=$(curl -s -H "Host: foo.localhost" http://127.0.0.1)
+          echo "Response: $resp"
+          [ "$resp" = "foo" ]
+
+          echo "Testing bar.localhost"
+          resp=$(curl -s -H "Host: bar.localhost" http://127.0.0.1)
+          echo "Response: $resp"
+          [ "$resp" = "bar" ]
+
+          echo "✅ Ingress routing works"
