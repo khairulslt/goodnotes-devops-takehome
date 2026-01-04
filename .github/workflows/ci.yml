@@ -1,0 +1,296 @@
+name: pr-ci-smoke
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smoke:
+    name: PR Smoke Test (KinD + Ingress + Load)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+
+    steps:
+      # =====================
+      # Checkout & Context
+      # =====================
+      - name: "[Init] Checkout repository"
+        uses: actions/checkout@v4
+
+      - name: "[Init] Show CI context"
+        run: |
+          echo "✅ CI is running for a Pull Request"
+          echo "Repo: $GITHUB_REPOSITORY"
+          echo "Workflow: $GITHUB_WORKFLOW"
+          echo "Run ID: $GITHUB_RUN_ID"
+          echo "Ref: $GITHUB_REF"
+          echo "SHA: $GITHUB_SHA"
+          echo ""
+          echo "Files at repo root:"
+          ls -la
+
+      # =====================
+      # Tooling Setup
+      # =====================
+      - name: "[Setup] Prepare local bin directory"
+        run: |
+          mkdir -p ./bin
+
+      - name: "[Setup] Install kind"
+        run: |
+          curl -fLo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          chmod +x ./bin/kind
+          ./bin/kind version
+
+      - name: "[Setup] Install kubectl"
+        run: |
+          curl -fLo ./bin/kubectl \
+            "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./bin/kubectl
+          ./bin/kubectl version --client
+
+      # =====================
+      # Kubernetes Cluster
+      # =====================
+      - name: "[Cluster] Create KinD cluster"
+        run: |
+          ./bin/kind create cluster --config kind/cluster.yaml
+
+      - name: "[Cluster] Wait for nodes to be Ready"
+        run: |
+          ./bin/kubectl wait --for=condition=Ready node --all --timeout=90s
+
+      - name: "[Cluster] Verify cluster has at least 2 nodes"
+        run: |
+          count=$(./bin/kubectl get nodes --no-headers | wc -l)
+          echo "Node count: $count"
+          if [ "$count" -lt 2 ]; then
+            echo "❌ Expected at least 2 nodes"
+            exit 1
+          fi
+
+      # =====================
+      # Ingress Controller
+      # =====================
+      - name: "[Ingress] Deploy ingress-nginx controller"
+        run: |
+          ./bin/kubectl apply -f \
+            https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+
+      - name: "[Ingress] Wait for ingress-nginx controller"
+        run: |
+          if ! ./bin/kubectl wait \
+            --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=300s; then
+
+            echo "❌ ingress-nginx controller did not become ready in time"
+            echo ""
+            echo "Pods:"
+            ./bin/kubectl get pods -n ingress-nginx -o wide || true
+            echo ""
+            echo "Events:"
+            ./bin/kubectl get events -n ingress-nginx --sort-by=.metadata.creationTimestamp
+            echo ""
+            echo "Controller logs:"
+            ./bin/kubectl logs -n ingress-nginx \
+              -l app.kubernetes.io/component=controller --tail=100 || true
+
+            exit 1
+          fi
+
+      - name: "[Ingress] Smoke test ingress-nginx HTTP endpoint"
+        run: |
+          # Before any Ingress rules exist, a 404 response is expected.
+          code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
+          echo "HTTP status from ingress endpoint: $code"
+
+          if [ "$code" != "404" ] && [ "$code" != "308" ] && [ "$code" != "200" ]; then
+            echo "Unexpected status code from ingress endpoint: $code"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            ./bin/kubectl logs -n ingress-nginx \
+              -l app.kubernetes.io/component=controller --tail=80
+            exit 1
+          fi
+          echo "✅ ingress-nginx responding on localhost (status $code)"
+
+      # =====================
+      # Application Deployment
+      # =====================
+      - name: "[Apps] Deploy foo application"
+        run: |
+          ./bin/kubectl apply -f k8s/foo.yaml
+
+      - name: "[Apps] Deploy bar application"
+        run: |
+          ./bin/kubectl apply -f k8s/bar.yaml
+
+      - name: "[Apps] Wait for foo deployment"
+        run: |
+          ./bin/kubectl rollout status deployment/foo --timeout=90s
+
+      - name: "[Apps] Wait for bar deployment"
+        run: |
+          ./bin/kubectl rollout status deployment/bar --timeout=90s
+
+      # =====================
+      # Ingress Rules & Validation
+      # =====================
+      - name: "[Ingress] Deploy ingress routing rules"
+        run: |
+          ./bin/kubectl apply -f k8s/ingress.yaml
+
+      - name: "[Ingress] Validate host-based routing"
+        run: |
+          echo "================================================="
+          echo "VALIDATING INGRESS HOST-BASED ROUTING"
+          echo "================================================="
+          echo ""
+          echo "Expected:"
+          echo "  foo.localhost -> response 'foo'"
+          echo "  bar.localhost -> response 'bar'"
+          echo ""
+
+          validate_route () {
+            host="$1"
+            expected="$2"
+
+            echo "Checking route for host: $host"
+            for i in {1..20}; do
+              resp=$(curl -sS --max-time 2 -H "Host: $host" http://127.0.0.1 || true)
+              echo "  Attempt $i: response='$resp'"
+
+              if [ "$resp" = "$expected" ]; then
+                echo "  ✅ SUCCESS: $host routed correctly to '$expected'"
+                echo ""
+                return 0
+              fi
+
+              sleep 2
+            done
+
+            echo ""
+            echo "  ❌ FAILURE: $host did NOT route to '$expected'"
+            echo "  Last response was: '$resp'"
+            exit 1
+          }
+
+          validate_route "foo.localhost" "foo"
+          validate_route "bar.localhost" "bar"
+
+          echo "================================================="
+          echo "✅ INGRESS ROUTING VALIDATED SUCCESSFULLY"
+          echo "================================================="
+
+      # =====================
+      # Metrics (Stretch Goal)
+      # =====================
+      - name: "[Metrics] Deploy metrics-server"
+        run: |
+          ./bin/kubectl apply -f \
+            https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+          # Required for KinD (no TLS on kubelet)
+          ./bin/kubectl -n kube-system patch deployment metrics-server \
+            --type=json \
+            -p='[
+              {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"},
+              {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP"}
+            ]'
+
+      - name: "[Metrics] Wait for metrics-server"
+        run: |
+          ./bin/kubectl wait \
+            -n kube-system \
+            --for=condition=Available deployment/metrics-server \
+            --timeout=120s
+
+      # =====================
+      # Load Testing
+      # =====================
+      - name: "[Load] Install k6"
+        run: |
+          curl -s https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: "[Load] Run k6 load test and sample resource usage"
+        run: |
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION BEFORE LOAD"
+          echo "================================================="
+          date
+          echo ""
+
+          ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+          ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+
+          echo ""
+          echo "Starting k6 load test..."
+          # NOTE:
+          # The k6 script uses handleSummary() to write
+          # loadtest/summary.txt for PR reporting.
+          k6 run loadtest/ingress.k6.js &
+          K6_PID=$!
+
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION DURING LOAD"
+          echo "================================================="
+
+          for i in {1..3}; do
+            echo "--- Sample $i ---"
+            date
+            ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+            ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+            sleep 5
+          done
+
+          echo "Waiting for k6 to finish..."
+          wait $K6_PID
+
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION AFTER LOAD"
+          echo "================================================="
+          date
+          ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+          ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+
+          echo ""
+          echo "================================================="
+          echo "✅ LOAD TEST COMPLETED"
+          echo "================================================="
+
+      # =====================
+      # Reporting
+      # =====================
+      - name: "[Report] Post load test results to PR"
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "gh CLI not found, skipping PR comment"
+            exit 0
+          fi
+
+          if [ ! -f loadtest/summary.txt ]; then
+            echo "Load test summary not found, skipping PR comment"
+            exit 0
+          fi
+
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file loadtest/summary.txt
+          echo "✅ Load test results posted to PR as comment"
