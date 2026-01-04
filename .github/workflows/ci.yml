@@ -225,10 +225,56 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y k6
 
-      - name: "[Load] Run k6 ingress load test"
+      - name: "[Load] Run k6 load test and sample resource usage"
         run: |
           set -e
-          k6 run loadtest/ingress.k6.js
+
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION BEFORE LOAD"
+          echo "================================================="
+          date
+          echo ""
+
+          ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+          ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+
+          echo ""
+          echo "Starting k6 load test..."
+          # NOTE:
+          # The k6 script uses handleSummary() to write
+          # loadtest/summary.txt for PR reporting.
+          k6 run loadtest/ingress.k6.js &
+          K6_PID=$!
+
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION DURING LOAD"
+          echo "================================================="
+
+          for i in {1..3}; do
+            echo "--- Sample $i ---"
+            date
+            ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+            ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+            sleep 5
+          done
+
+          echo "Waiting for k6 to finish..."
+          wait $K6_PID
+
+          echo ""
+          echo "================================================="
+          echo "KUBERNETES RESOURCE UTILISATION AFTER LOAD"
+          echo "================================================="
+          date
+          ./bin/kubectl top nodes || echo "kubectl top nodes not available"
+          ./bin/kubectl top pods -A || echo "kubectl top pods not available"
+
+          echo ""
+          echo "================================================="
+          echo "✅ LOAD TEST COMPLETED"
+          echo "================================================="
 
       # =====================
       # Reporting
