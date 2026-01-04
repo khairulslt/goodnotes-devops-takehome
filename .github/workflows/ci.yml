@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   smoke:
@@ -205,3 +206,27 @@ jobs:
         run: |
           set -e
           k6 run loadtest/ingress.k6.js
+
+      # =====================
+      # Reporting
+      # =====================
+      - name: "[Report] Post load test results to PR"
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "gh CLI not found, skipping PR comment"
+            exit 0
+          fi
+
+          if [ ! -f loadtest/summary.txt ]; then
+            echo "Load test summary not found, skipping PR comment"
+            exit 0
+          fi
+
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file loadtest/summary.txt
+          echo "✅ Load test results posted to PR as comment"
