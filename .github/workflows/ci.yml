@@ -138,3 +138,54 @@ jobs:
       - name: "[Apps] Wait for bar deployment"
         run: |
           ./bin/kubectl rollout status deployment/bar --timeout=90s
+
+      # =====================
+      # Ingress Rules & Validation
+      # =====================
+      - name: "[Ingress] Deploy ingress routing rules"
+        run: |
+          ./bin/kubectl apply -f k8s/ingress.yaml
+
+      - name: "[Ingress] Validate host-based routing"
+        run: |
+          set -e
+
+          echo "================================================="
+          echo "VALIDATING INGRESS HOST-BASED ROUTING"
+          echo "================================================="
+          echo ""
+          echo "Expected:"
+          echo "  foo.localhost -> response 'foo'"
+          echo "  bar.localhost -> response 'bar'"
+          echo ""
+
+          validate_route () {
+            host="$1"
+            expected="$2"
+
+            echo "Checking route for host: $host"
+            for i in {1..20}; do
+              resp=$(curl -s -H "Host: $host" http://127.0.0.1 || true)
+              echo "  Attempt $i: response='$resp'"
+
+              if [ "$resp" = "$expected" ]; then
+                echo "  ✅ SUCCESS: $host routed correctly to '$expected'"
+                echo ""
+                return 0
+              fi
+
+              sleep 2
+            done
+
+            echo ""
+            echo "  ❌ FAILURE: $host did NOT route to '$expected'"
+            echo "  Last response was: '$resp'"
+            exit 1
+          }
+
+          validate_route "foo.localhost" "foo"
+          validate_route "bar.localhost" "bar"
+
+          echo "================================================="
+          echo "✅ INGRESS ROUTING VALIDATED SUCCESSFULLY"
+          echo "================================================="
