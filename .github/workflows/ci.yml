@@ -82,11 +82,28 @@ jobs:
 
       - name: "[Ingress] Wait for ingress-nginx controller"
         run: |
-          ./bin/kubectl wait \
+          set -e
+
+          if ! ./bin/kubectl wait \
             --namespace ingress-nginx \
             --for=condition=Ready pod \
             --selector=app.kubernetes.io/component=controller \
-            --timeout=180s
+            --timeout=300s; then
+
+            echo "❌ ingress-nginx controller did not become ready in time"
+            echo ""
+            echo "Pods:"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            echo ""
+            echo "Events:"
+            ./bin/kubectl get events -n ingress-nginx --sort-by=.metadata.creationTimestamp
+            echo ""
+            echo "Controller logs:"
+            ./bin/kubectl logs -n ingress-nginx \
+              -l app.kubernetes.io/component=controller --tail=100
+
+            exit 1
+          fi
 
       - name: "[Ingress] Smoke test ingress-nginx HTTP endpoint"
         run: |
