@@ -71,3 +71,51 @@ jobs:
             echo "❌ Expected at least 2 nodes"
             exit 1
           fi
+
+      # =====================
+      # Ingress Controller
+      # =====================
+      - name: "[Ingress] Deploy ingress-nginx controller"
+        run: |
+          ./bin/kubectl apply -f \
+            https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+
+      - name: "[Ingress] Wait for ingress-nginx controller"
+        run: |
+          set -e
+
+          if ! ./bin/kubectl wait \
+            --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=300s; then
+
+            echo "❌ ingress-nginx controller did not become ready in time"
+            echo ""
+            echo "Pods:"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            echo ""
+            echo "Events:"
+            ./bin/kubectl get events -n ingress-nginx --sort-by=.metadata.creationTimestamp
+            echo ""
+            echo "Controller logs:"
+            ./bin/kubectl logs -n ingress-nginx \
+              -l app.kubernetes.io/component=controller --tail=100
+
+            exit 1
+          fi
+
+      - name: "[Ingress] Smoke test ingress-nginx HTTP endpoint"
+        run: |
+          # Before any Ingress rules exist, a 404 response is expected.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
+          echo "HTTP status from ingress endpoint: $code"
+
+          if [ "$code" != "404" ] && [ "$code" != "308" ] && [ "$code" != "200" ]; then
+            echo "Unexpected status code from ingress endpoint: $code"
+            ./bin/kubectl get pods -n ingress-nginx -o wide
+            ./bin/kubectl logs -n ingress-nginx \
+              -l app.kubernetes.io/component=controller --tail=80
+            exit 1
+          fi
+          echo "✅ ingress-nginx responding on localhost (status $code)"
