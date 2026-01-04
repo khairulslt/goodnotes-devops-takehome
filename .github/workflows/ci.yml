@@ -13,6 +13,9 @@ jobs:
   smoke:
     name: PR Smoke Test (KinD + Ingress + Load)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
 
     steps:
       # =====================
@@ -42,13 +45,13 @@ jobs:
 
       - name: "[Setup] Install kind"
         run: |
-          curl -Lo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          curl -fLo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
           chmod +x ./bin/kind
           ./bin/kind version
 
       - name: "[Setup] Install kubectl"
         run: |
-          curl -Lo ./bin/kubectl \
+          curl -fLo ./bin/kubectl \
             "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x ./bin/kubectl
           ./bin/kubectl version --client
@@ -83,8 +86,6 @@ jobs:
 
       - name: "[Ingress] Wait for ingress-nginx controller"
         run: |
-          set -e
-
           if ! ./bin/kubectl wait \
             --namespace ingress-nginx \
             --for=condition=Ready pod \
@@ -94,14 +95,14 @@ jobs:
             echo "❌ ingress-nginx controller did not become ready in time"
             echo ""
             echo "Pods:"
-            ./bin/kubectl get pods -n ingress-nginx -o wide
+            ./bin/kubectl get pods -n ingress-nginx -o wide || true
             echo ""
             echo "Events:"
             ./bin/kubectl get events -n ingress-nginx --sort-by=.metadata.creationTimestamp
             echo ""
             echo "Controller logs:"
             ./bin/kubectl logs -n ingress-nginx \
-              -l app.kubernetes.io/component=controller --tail=100
+              -l app.kubernetes.io/component=controller --tail=100 || true
 
             exit 1
           fi
@@ -109,7 +110,7 @@ jobs:
       - name: "[Ingress] Smoke test ingress-nginx HTTP endpoint"
         run: |
           # Before any Ingress rules exist, a 404 response is expected.
-          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1 || true)"
           echo "HTTP status from ingress endpoint: $code"
 
           if [ "$code" != "404" ] && [ "$code" != "308" ] && [ "$code" != "200" ]; then
@@ -149,8 +150,6 @@ jobs:
 
       - name: "[Ingress] Validate host-based routing"
         run: |
-          set -e
-
           echo "================================================="
           echo "VALIDATING INGRESS HOST-BASED ROUTING"
           echo "================================================="
@@ -166,7 +165,7 @@ jobs:
 
             echo "Checking route for host: $host"
             for i in {1..20}; do
-              resp=$(curl -s -H "Host: $host" http://127.0.0.1 || true)
+              resp=$(curl -sS --max-time 2 -H "Host: $host" http://127.0.0.1 || true)
               echo "  Attempt $i: response='$resp'"
 
               if [ "$resp" = "$expected" ]; then
@@ -227,8 +226,6 @@ jobs:
 
       - name: "[Load] Run k6 load test and sample resource usage"
         run: |
-          set -e
-
           echo ""
           echo "================================================="
           echo "KUBERNETES RESOURCE UTILISATION BEFORE LOAD"
@@ -284,8 +281,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-
           if ! command -v gh >/dev/null 2>&1; then
             echo "gh CLI not found, skipping PR comment"
             exit 0
