@@ -51,3 +51,23 @@ jobs:
             "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x ./bin/kubectl
           ./bin/kubectl version --client
+
+      # =====================
+      # Kubernetes Cluster
+      # =====================
+      - name: "[Cluster] Create KinD cluster"
+        run: |
+          ./bin/kind create cluster --config kind/cluster.yaml
+
+      - name: "[Cluster] Wait for nodes to be Ready"
+        run: |
+          ./bin/kubectl wait --for=condition=Ready node --all --timeout=90s
+
+      - name: "[Cluster] Verify cluster has at least 2 nodes"
+        run: |
+          count=$(./bin/kubectl get nodes --no-headers | wc -l)
+          echo "Node count: $count"
+          if [ "$count" -lt 2 ]; then
+            echo "❌ Expected at least 2 nodes"
+            exit 1
+          fi
