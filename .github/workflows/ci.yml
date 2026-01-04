@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash -euo pipefail
+        shell: bash --noprofile --norc -euo pipefail {0}
 
     steps:
       # =====================
