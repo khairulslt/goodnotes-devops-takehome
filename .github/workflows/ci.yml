@@ -189,3 +189,19 @@ jobs:
           echo "================================================="
           echo "✅ INGRESS ROUTING VALIDATED SUCCESSFULLY"
           echo "================================================="
+
+      # =====================
+      # Load Testing
+      # =====================
+      - name: "[Load] Install k6"
+        run: |
+          curl -s https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: "[Load] Run k6 ingress load test"
+        run: |
+          set -e
+          k6 run loadtest/ingress.k6.js
