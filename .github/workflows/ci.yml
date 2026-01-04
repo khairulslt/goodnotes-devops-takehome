@@ -31,3 +31,23 @@ jobs:
           echo ""
           echo "Files at repo root:"
           ls -la
+
+      # =====================
+      # Tooling Setup
+      # =====================
+      - name: "[Setup] Prepare local bin directory"
+        run: |
+          mkdir -p ./bin
+
+      - name: "[Setup] Install kind"
+        run: |
+          curl -Lo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          chmod +x ./bin/kind
+          ./bin/kind version
+
+      - name: "[Setup] Install kubectl"
+        run: |
+          curl -Lo ./bin/kubectl \
+            "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./bin/kubectl
+          ./bin/kubectl version --client
