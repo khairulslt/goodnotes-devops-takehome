@@ -119,3 +119,22 @@ jobs:
             exit 1
           fi
           echo "✅ ingress-nginx responding on localhost (status $code)"
+
+      # =====================
+      # Application Deployment
+      # =====================
+      - name: "[Apps] Deploy foo application"
+        run: |
+          ./bin/kubectl apply -f k8s/foo.yaml
+
+      - name: "[Apps] Deploy bar application"
+        run: |
+          ./bin/kubectl apply -f k8s/bar.yaml
+
+      - name: "[Apps] Wait for foo deployment"
+        run: |
+          ./bin/kubectl rollout status deployment/foo --timeout=90s
+
+      - name: "[Apps] Wait for bar deployment"
+        run: |
+          ./bin/kubectl rollout status deployment/bar --timeout=90s
